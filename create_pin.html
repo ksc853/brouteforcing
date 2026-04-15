@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Create 4-Digit PIN (Demo)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; background:#f4f7fb; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
+    .card { background:white; padding:24px; border-radius:12px; box-shadow:0 6px 20px rgba(0,0,0,0.08); width:320px; }
+    input { width:100%; padding:10px; font-size:18px; margin-bottom:10px; box-sizing:border-box; }
+    button { width:100%; padding:10px; font-size:16px; border-radius:8px; border:none; cursor:pointer; }
+    .note { font-size:13px; color:#666; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Create 4-Digit PIN</h2>
+    <input id="pin" maxlength="4" placeholder="Enter 4 digits (e.g. 0421)" inputmode="numeric" />
+    <button id="saveBtn">Save PIN and go to Login</button>
+    <button id="cancelBtn" style="margin-top:8px; background:#eee;">Cancel</button>
+    <p class="note">This is a local demo. The PIN will be stored only in your browser's localStorage.</p>
+    <p id="msg" style="color:red; font-size:14px;"></p>
+  </div>
+
+  <script>
+    const pinInput = document.getElementById('pin');
+    const saveBtn = document.getElementById('saveBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+    const msg = document.getElementById('msg');
+
+    // allow only digits
+    pinInput.addEventListener('input', () => {
+      pinInput.value = pinInput.value.replace(/\D/g,'').slice(0,4);
+    });
+
+    saveBtn.addEventListener('click', () => {
+      const pin = pinInput.value.trim();
+      if (!/^\d{4}$/.test(pin)) {
+        msg.textContent = 'PIN must be exactly 4 digits.';
+        return;
+      }
+      // store only one PIN under the key demo_saved_pin
+      localStorage.setItem('demo_saved_pin', pin);
+      // clear message and redirect to login
+      msg.style.color = 'green';
+      msg.textContent = 'PIN saved. Redirecting to login...';
+      setTimeout(() => window.location.href = 'login.html', 700);
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      // go to cancel page
+      window.location.href = 'cancel.html';
+    });
+  </script>
+</body>
+</html>

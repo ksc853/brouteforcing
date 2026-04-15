@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Login — 4-Digit PIN Demo (Enhanced Cracker)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body{font-family:Inter,Arial,Helvetica,sans-serif;background:#f3f6fb;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;padding:20px}
+    .card{background:white;padding:20px;border-radius:12px;width:720px;box-shadow:0 10px 40px rgba(20,30,60,0.08)}
+    h2{margin:0 0 8px 0}
+    .muted{color:#6b7280;font-size:13px}
+    .row{display:flex;gap:12px;align-items:center}
+    .controls{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+    input[type="text"]{padding:10px;font-size:16px;width:100%;box-sizing:border-box}
+    select, button, input[type="range"]{padding:8px;font-size:14px}
+    button{cursor:pointer;border:none;border-radius:8px}
+    .btn-primary{background:#0ea5a4;color:white}
+    .btn-warn{background:#fb923c;color:white}
+    .btn-danger{background:#ef4444;color:white}
+    .status{margin-top:12px;font-size:14px}
+    .progress{height:14px;background:#eef2f6;border-radius:8px;overflow:hidden;margin-top:8px}
+    .bar{height:100%;width:0%;transition:width 0.12s linear;background:linear-gradient(90deg,#60a5fa,#06b6d4)}
+    #log{margin-top:12px;height:160px;overflow:auto;background:#0f1724;color:#e6eef8;padding:8px;border-radius:8px;font-family:monospace;font-size:13px}
+    .small{font-size:12px;color:#475569}
+    .grid-three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Login — 4-Digit PIN Demo (Enhanced)</h2>
+    <p class="muted">This demo runs locally in your browser. <strong>Do not</strong> use against real accounts.</p>
+
+    <div style="display:flex;gap:12px;align-items:center">
+      <input id="tryPin" maxlength="4" placeholder="Try PIN (4 digits)" inputmode="numeric" />
+      <button id="tryBtn" class="btn-primary">Try</button>
+      <button id="clearBtn" style="background:#e6eef8">Clear</button>
+      <button id="backCreate" style="background:#f1f5f9">Back to Create</button>
+    </div>
+
+    <div class="controls">
+      <div>
+        <label class="small">Mode</label>
+        <select id="mode">
+          <option value="sequential">Sequential (0000 → 9999)</option>
+          <option value="random">Random (no repeats)</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="small">Speed: <span id="speedLabel">200</span> attempts/sec</label>
+        <input id="speed" type="range" min="10" max="5000" value="200" />
+      </div>
+
+      <div>
+        <label class="small">Batch size (internal)</label>
+        <select id="batch">
+          <option value="1">1</option>
+          <option value="5">5</option>
+          <option value="20" selected>20</option>
+          <option value="50">50</option>
+          <option value="200">200</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button id="startCrack" class="btn-warn">Start Cracker</button>
+      <button id="stopCrack" class="btn-danger" disabled>Stop</button>
+      <button id="resetCrack" style="background:#e2e8f0">Reset</button>
+      <button id="exportCSV" style="background:#d1fae5">Export CSV</button>
+    </div>
+
+    <div class="status" id="status">Status: waiting.</div>
+    <div class="progress" aria-hidden="true">
+      <div class="bar" id="progressBar"></div>
+    </div>
+
+    <div class="grid-three">
+      <div><small class="small">Attempts</small><div id="attempts" style="font-weight:600">0</div></div>
+      <div><small class="small">Attempts/sec (est)</small><div id="rate" style="font-weight:600">0</div></div>
+      <div><small class="small">Elapsed</small><div id="elapsed" style="font-weight:600">00:00:00</div></div>
+    </div>
+
+    <div id="log" aria-live="polite"></div>
+    <p style="margin-top:10px"><small class="muted">Note: This demo compares guesses with the locally saved PIN (`demo_saved_pin`) only.</small></p>
+  </div>
+
+<script>
+(function(){
+  // utilities
+  const pad4 = n => String(n).padStart(4,'0');
+  function nowMs(){ return performance.now(); }
+  function formatElapsed(ms){
+    const s = Math.floor(ms/1000);
+    const hh = String(Math.floor(s/3600)).padStart(2,'0');
+    const mm = String(Math.floor(s%3600/60)).padStart(2,'0');
+    const ss = String(s%60).padStart(2,'0');
+    return `${hh}:${mm}:${ss}`;
+  }
+
+  // elements
+  const savedPin = localStorage.getItem('demo_saved_pin');
+  const statusEl = document.getElementById('status');
+  const tryPinInput = document.getElementById('tryPin');
+  const tryBtn = document.getElementById('tryBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const backCreate = document.getElementById('backCreate');
+
+  const modeEl = document.getElementById('mode');
+  const speedEl = document.getElementById('speed');
+  const speedLabel = document.getElementById('speedLabel');
+  const batchEl = document.getElementById('batch');
+
+  const startBtn = document.getElementById('startCrack');
+  const stopBtn = document.getElementById('stopCrack');
+  const resetBtn = document.getElementById('resetCrack');
+  const exportBtn = document.getElementById('exportCSV');
+
+  const progressBar = document.getElementById('progressBar');
+  const logEl = document.getElementById('log');
+  const attemptsEl = document.getElementById('attempts');
+  const rateEl = document.getElementById('rate');
+  const elapsedEl = document.getElementById('elapsed');
+
+  if (!savedPin) {
+    statusEl.style.color = '#b00';
+    statusEl.textContent = 'No PIN found. Please create a PIN first via create_pin.html';
+  }
+
+  tryPinInput.addEventListener('input', ()=> tryPinInput.value = tryPinInput.value.replace(/\D/g,'').slice(0,4));
+  tryBtn.addEventListener('click', ()=>{
+    if (!savedPin) return alert('No PIN saved. Open create_pin.html first.');
+    const attempt = (tryPinInput.value || '').padStart(4,'0');
+    if (!/^\d{4}$/.test(attempt)) return alert('Enter 4 digits to try.');
+    if (attempt === savedPin) {
+      statusEl.style.color = 'green';
+      statusEl.textContent = `Correct! PIN ${attempt} accepted.`;
+      appendLog(`Manual attempt: ${attempt} → OK`);
+    } else {
+      statusEl.style.color = '#b00';
+      statusEl.textContent = `Incorrect PIN ${attempt}.`;
+      appendLog(`Manual attempt: ${attempt} → wrong`);
+    }
+  });
+  clearBtn.addEventListener('click', ()=> { tryPinInput.value=''; statusEl.style.color='#333'; statusEl.textContent='Status: waiting.'; });
+
+  backCreate.addEventListener('click', ()=> window.location.href='create_pin.html');
+
+  // UI controls
+  speedEl.addEventListener('input', ()=> speedLabel.textContent = speedEl.value);
+
+  // logging helper
+  let logLines = [];
+  function appendLog(text){
+    const ts = new Date().toLocaleTimeString();
+    const line = `[${ts}] ${text}`;
+    logLines.push(line);
+    logEl.textContent = logLines.slice(-200).join('\n'); // keep last 200 lines
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  // Cracker state
+  let running = false;
+  let stopRequested = false;
+  let attemptCount = 0;
+  let startTime = 0;
+  let lastTickTime = 0;
+  let attemptsThisSecond = 0;
+  let totalSpace = 10000;
+  let triedSet = null;     // only for random mode
+  let nextSeq = 0;
+  let tickerId = null;
+
+  function resetState(){
+    stopRequested = false;
+    running = false;
+    attemptCount = 0;
+    startTime = 0;
+    lastTickTime = 0;
+    attemptsThisSecond = 0;
+    triedSet = null;
+    nextSeq = 0;
+    progressBar.style.width = '0%';
+    attemptsEl.textContent = '0';
+    rateEl.textContent = '0';
+    elapsedEl.textContent = '00:00:00';
+    logLines = [];
+    logEl.textContent = '';
+    statusEl.style.color = '#333';
+    statusEl.textContent = 'Status: waiting.';
+  }
+  resetState();
+
+  // Start
+  startBtn.addEventListener('click', ()=>{
+    if (!savedPin) return alert('No PIN saved. Create one first.');
+    if (running) return;
+    running = true;
+    stopRequested = false;
+    startTime = nowMs();
+    lastTickTime = startTime;
+    attemptCount = 0;
+    triedSet = new Set();
+    nextSeq = 0;
+
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    resetBtn.disabled = true;
+    appendLog(`Simulation started — mode=${modeEl.value}, speed=${speedEl.value} a/s`);
+    statusEl.style.color = '#0b5cff';
+    statusEl.textContent = 'Cracker running...';
+
+    // compute interval: we will run in small ticks, attempting batch attempts per tick.
+    function tick(){
+      if (stopRequested) { stopRun('stopped by user'); return; }
+      // compute how many attempts to perform this tick based on speed
+      const desiredPerSec = Number(speedEl.value) || 200;
+      const batchSetting = Number(batchEl.value) || 20;
+      // target milliseconds between batches = (batch / desiredPerSec) * 1000
+      const msPerBatch = Math.max(1, Math.round((batchSetting / desiredPerSec) * 1000));
+      // Do up to batchSetting attempts this tick
+      const mode = modeEl.value;
+      let attemptsThisTick = batchSetting;
+      // perform attempts
+      for (let j=0;j<attemptsThisTick;j++){
+        if (attemptCount >= totalSpace) { stopRun('exhausted all possibilities'); return; }
+        let guess;
+        if (mode === 'sequential'){
+          // next sequential guess not yet tried
+          guess = pad4(nextSeq);
+          nextSeq++;
+        } else { // random
+          // pick random unused number
+          let tries=0;
+          do {
+            const r = Math.floor(Math.random()*totalSpace);
+            if (!triedSet.has(r)){
+              triedSet.add(r);
+              guess = pad4(r);
+              break;
+            }
+            tries++;
+            if (tries>20){ // fallback to sequential search over remaining
+              while (triedSet.has(nextSeq)) nextSeq++;
+              triedSet.add(nextSeq);
+              guess = pad4(nextSeq);
+              nextSeq++;
+              break;
+            }
+          } while(true);
+        }
+
+        attemptCount++;
+        attemptsThisSecond++;
+        attemptsEl.textContent = String(attemptCount);
+
+        // check
+        if (guess === savedPin){
+          const elapsedMs = nowMs() - startTime;
+          progressBar.style.width = `${Math.round((attemptCount/totalSpace)*100)}%`;
+          statusEl.style.color = 'green';
+          statusEl.textContent = `Found PIN ${guess} in ${attemptCount} attempts (${formatElapsed(elapsedMs)}).`;
+          appendLog(`Found PIN ${guess} after ${attemptCount} attempts.`);
+          finishRun();
+          return;
+        } else {
+          if (attemptCount % 50 === 0) appendLog(`Attempt ${attemptCount}: ${guess} → wrong`);
+        }
+      }
+
+      // update progress and schedule next tick
+      progressBar.style.width = `${Math.round((attemptCount/totalSpace)*100)}%`;
+      const now = nowMs();
+      const elapsed = now - startTime;
+      elapsedEl.textContent = formatElapsed(elapsed);
+      // approximate rate: attempts / seconds (smoothed)
+      const rate = Math.round((attemptCount / Math.max(0.001, elapsed/1000)));
+      rateEl.textContent = String(rate);
+      // schedule next tick using msPerBatch
+      tickerId = setTimeout(tick, Math.max(1, msPerBatch));
+    }
+
+    tick();
+  });
+
+  function stopRun(reason){
+    running = false;
+    stopRequested = true;
+    if (tickerId) clearTimeout(tickerId);
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    resetBtn.disabled = false;
+    appendLog(`Stopped: ${reason}`);
+    statusEl.style.color = '#b00';
+    statusEl.textContent = `Stopped: ${reason}`;
+  }
+
+  function finishRun(){
+    running = false;
+    if (tickerId) clearTimeout(tickerId);
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    resetBtn.disabled = false;
+    appendLog(`Finished after ${attemptCount} attempts.`);
+  }
+
+  function finishRunFound(){
+    // kept for clarity (not used separately)
+    finishRun();
+  }
+
+  function finishRunNotFound(){
+    finishRun();
+  }
+
+  function finishRunGeneric(msg){
+    finishRun();
+    appendLog(msg);
+  }
+
+  function finishRunIfExhausted(){
+    if (attemptCount >= totalSpace){
+      finishRunNotFound();
+    }
+  }
+
+  function finishRunFoundInline(){
+    finishRunFound();
+  }
+
+  // Stop button
+  stopBtn.addEventListener('click', ()=> {
+    if (!running) return;
+    stopRequested = true;
+    stopBtn.disabled = true;
+  });
+
+  // Reset
+  resetBtn.addEventListener('click', ()=> {
+    if (running) return alert('Stop the run before resetting.');
+    if (!confirm('Reset log and counters?')) return;
+    resetState();
+  });
+
+  // Export CSV
+  exportBtn.addEventListener('click', ()=>{
+    if (logLines.length === 0) return alert('No log lines to export.');
+    const header = 'timestamp,entry\n';
+    const body = logLines.map(l=>{
+      const m = l.match(/^\[(.+?)\]\s(.*)$/);
+      if (m) return `"${m[1]}","${m[2].replace(/"/g,'""')}"`;
+      return `"","${l.replace(/"/g,'""')}"`;
+    }).join('\n');
+    const csv = header + body;
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'pin_cracker_log.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  // small safety: beforeunload warning if running
+  window.addEventListener('beforeunload', (e)=>{
+    if (running) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
